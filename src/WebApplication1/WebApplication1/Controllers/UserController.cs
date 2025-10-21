@@ -37,7 +37,6 @@ public class UserController : ControllerBase
                     Id = reader["UserId"],
                     Username = reader["Username"],
                     Email = reader["Email"],
-                    Password = reader["Password"] // Should never return this!
                 };
                 
                 return Ok(user);
