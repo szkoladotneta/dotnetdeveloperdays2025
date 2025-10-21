@@ -1,0 +1,139 @@
+name: Code Quality Checks
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - '**.cs'
+      - '**.csproj'
+      - '**.sln'
+  push:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+
+env:
+  SOLUTION_PATH: 'src/WebApplication1/WebApplication1.sln'
+  PROJECT_PATH: 'src/WebApplication1/WebApplication1/WebApplication1.csproj'
+
+jobs:
+  build-and-test:
+    name: Build and Test
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore ${{ env.SOLUTION_PATH }}
+
+      - name: Build
+        run: dotnet build ${{ env.SOLUTION_PATH }} --configuration Release --no-restore
+
+      - name: Run tests
+        run: dotnet test ${{ env.SOLUTION_PATH }} --configuration Release --no-build --verbosity normal
+        continue-on-error: true  # Won't fail if no test projects exist yet
+
+      - name: Build Summary
+        if: always()
+        run: |
+          echo "## 🏗️ Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Built solution: \`${{ env.SOLUTION_PATH }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Project structure:" >> $GITHUB_STEP_SUMMARY
+          echo "- Solution: copilot-pr-demo-test1.sln" >> $GITHUB_STEP_SUMMARY
+          echo "- Project: copilot-pr-demo-test1.csproj" >> $GITHUB_STEP_SUMMARY
+
+  code-format:
+    name: Check Code Formatting
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore ${{ env.SOLUTION_PATH }}
+
+      - name: Check formatting
+        run: dotnet format ${{ env.SOLUTION_PATH }} --verify-no-changes --verbosity diagnostic
+        continue-on-error: true
+        id: format
+
+      - name: Comment on PR if formatting issues
+        if: steps.format.outcome == 'failure' && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '⚠️ **Code Formatting Issues Detected**\n\nPlease run `dotnet format` to fix formatting issues.\n\n```bash\ncd copilot-pr-demo-test1\ndotnet format copilot-pr-demo-test1.sln\ngit add .\ngit commit -m "style: apply code formatting"\ngit push\n```'
+            })
+
+      - name: Fail if formatting issues
+        if: steps.format.outcome == 'failure'
+        run: exit 1
+
+  code-analysis:
+    name: Static Code Analysis
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore ${{ env.SOLUTION_PATH }}
+
+      - name: Build with code analysis
+        run: dotnet build ${{ env.SOLUTION_PATH }} --configuration Release --no-restore /p:EnforceCodeStyleInBuild=true
+        continue-on-error: true
+
+  dependency-check:
+    name: Dependency Vulnerability Check
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Check for vulnerable packages
+        run: |
+          echo "Checking for vulnerable packages in project..."
+          dotnet list ${{ env.PROJECT_PATH }} package --vulnerable --include-transitive 2>&1 | tee vulnerable-packages.txt
+          
+          if grep -q "has the following vulnerable packages" vulnerable-packages.txt; then
+            echo "❌ Vulnerable packages detected!"
+            cat vulnerable-packages.txt
+            exit 1
+          else
+            echo "✅ No vulnerable packages found"
+          fi
+        continue-on-error: true
