@@ -24,6 +24,7 @@ public class UserController : ControllerBase
         {
             connection.Open();
             
+            // Build SQL query - PROBLEM: SQL Injection!
             var query = "SELECT UserId, Username, Email, Password FROM Users WHERE UserId = '" + id + "'";
             
             var command = new SqlCommand(query, connection);
@@ -37,6 +38,7 @@ public class UserController : ControllerBase
                     Id = reader["UserId"],
                     Username = reader["Username"],
                     Email = reader["Email"],
+                    Password = reader["Password"] // Should never return this!
                 };
                 
                 return Ok(user);
@@ -55,6 +57,7 @@ public class UserController : ControllerBase
         {
             connection.Open();
             
+            // PROBLEM: SQL Injection + plain text password comparison
             var query = "SELECT * FROM Users WHERE Username = '" + username + 
                        "' AND Password = '" + password + "'";
             
