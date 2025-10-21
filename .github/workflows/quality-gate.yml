@@ -1,0 +1,143 @@
+name: PR Quality Gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  pr-validation:
+    name: Validate PR Requirements
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check PR Title Format
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = context.payload.pull_request.title;
+            const pattern = /^(feat|fix|docs|refactor|test|chore|perf|ci|build|style)(\(.+\))?:\s.+/;
+            
+            if (!pattern.test(title)) {
+              core.setFailed('❌ PR title must follow conventional commits format: type(scope): description\n\nExamples:\n- feat: add user authentication\n- fix(api): resolve null reference in order controller\n- docs: update README with setup instructions');
+            } else {
+              console.log('✅ PR title format is valid');
+            }
+
+      - name: Check PR Size
+        uses: actions/github-script@v7
+        id: pr-size
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const filesChanged = pr.changed_files;
+            const additions = pr.additions;
+            const deletions = pr.deletions;
+            const totalChanges = additions + deletions;
+            
+            console.log(`Files changed: ${filesChanged}`);
+            console.log(`Lines added: ${additions}`);
+            console.log(`Lines deleted: ${deletions}`);
+            console.log(`Total changes: ${totalChanges}`);
+            
+            let size = 'small';
+            let emoji = '✅';
+            let message = 'PR size is appropriate for review';
+            
+            if (filesChanged > 20 || totalChanges > 500) {
+              size = 'large';
+              emoji = '⚠️';
+              message = 'Large PR detected. Consider breaking into smaller PRs for easier review.';
+            } else if (filesChanged > 10 || totalChanges > 300) {
+              size = 'medium';
+              emoji = '📊';
+              message = 'Medium-sized PR. Still manageable for review.';
+            }
+            
+            // Post comment if large
+            if (size === 'large') {
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: `${emoji} **PR Size Check**\n\n${message}\n\n**Stats:**\n- Files changed: ${filesChanged}\n- Lines added: ${additions}\n- Lines deleted: ${deletions}\n- Total changes: ${totalChanges}\n\n**Recommendation:** PRs under 10 files and 300 lines are easier to review thoroughly.`
+              });
+            }
+            
+            return size;
+
+      - name: Check for Tests
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: files } = await github.rest.pulls.listFiles({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+            });
+            
+            const codeFiles = files.filter(f => 
+              f.filename.endsWith('.cs') && 
+              !f.filename.includes('Test') &&
+              !f.filename.includes('/obj/') &&
+              !f.filename.includes('/bin/') &&
+              (f.status === 'added' || f.status === 'modified')
+            );
+            
+            const testFiles = files.filter(f => 
+              f.filename.includes('Test') && 
+              f.filename.endsWith('.cs') &&
+              (f.status === 'added' || f.status === 'modified')
+            );
+            
+            console.log(`Code files changed: ${codeFiles.length}`);
+            console.log(`Test files changed: ${testFiles.length}`);
+            
+            if (codeFiles.length > 0 && testFiles.length === 0) {
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: '⚠️ **Tests Missing**\n\nThis PR modifies code files but doesn\'t include test changes.\n\n**Changed code files:**\n' + 
+                      codeFiles.map(f => `- \`${f.filename}\``).join('\n') +
+                      '\n\nPlease add tests for your changes.'
+              });
+              
+              core.setFailed('Tests are required for code changes');
+            } else if (codeFiles.length > 0 && testFiles.length > 0) {
+              console.log('✅ Tests included with code changes');
+            } else {
+              console.log('ℹ️ No code changes detected (docs/config only)');
+            }
+
+      - name: Post Summary
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prSize = '${{ steps.pr-size.outputs.result }}' || 'unknown';
+            const emoji = prSize === 'large' ? '⚠️' : prSize === 'medium' ? '📊' : '✅';
+            
+            const summary = `## ${emoji} PR Quality Gate Check
+            
+            **Status:** ${{ job.status }}
+            **PR Size:** ${prSize}
+            
+            ### Checks Performed
+            - ✅ PR title format validation
+            - ✅ PR size analysis
+            - ✅ Test coverage verification
+            
+            ${prSize === 'large' ? '💡 **Tip:** Smaller PRs are easier to review and merge faster!' : ''}
+            `;
+            
+            console.log(summary);
